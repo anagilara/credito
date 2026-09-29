@@ -25,9 +25,6 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r requirements.txt
 
-      - name: Calidad de datos (shift-left)
-        run: pytest tests/test_data_quality.py -q
-
       - name: Pruebas del modelo
         run: pytest tests/ -q
 
