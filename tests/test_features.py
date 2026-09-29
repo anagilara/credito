@@ -5,12 +5,13 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
+
 from src.features import MODEL_INPUT_COLUMNS, build_features
 from src import score as score_api
 from src.train import train_model
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 def valid_row() -> dict:
     return {
