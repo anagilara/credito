@@ -1,0 +1,170 @@
+name: CD - Churn Radar
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Operación sobre la revisión
+        required: true
+        default: deploy-canary
+        type: choice
+        options:
+          - deploy-canary
+          - promote
+          - rollback
+      target_revision:
+        description: Revisión que recibirá 100% del tráfico en promote/rollback
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AZURE_RESOURCE_GROUP: rg-churn-radar-demo
+  AZURE_LOCATION: eastus
+  CONTAINER_APP_NAME: churn-radar-api
+
+jobs:
+  deploy-canary:
+    if: inputs.operation == 'deploy-canary'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Iniciar sesión en Azure con OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Preparar Azure Container Apps
+        run: az extension add --name containerapp --upgrade
+
+      - name: Crear grupo de recursos
+        run: az group create --name "$AZURE_RESOURCE_GROUP" --location "$AZURE_LOCATION"
+
+      - name: Validar Bicep
+        run: az bicep build --file infra/main.bicep
+
+      - name: Mostrar cambios de infraestructura
+        run: |
+          az deployment group what-if \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --template-file infra/main.bicep \
+            --parameters location="$AZURE_LOCATION" deployContainerApp=false
+
+      - name: Desplegar infraestructura base
+        id: infrastructure
+        run: |
+          az deployment group create \
+            --name "churn-radar-${GITHUB_RUN_ID}" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --template-file infra/main.bicep \
+            --parameters location="$AZURE_LOCATION" deployContainerApp=false
+
+          ACR_NAME=$(az deployment group show \
+            --name "churn-radar-${GITHUB_RUN_ID}" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query properties.outputs.registryName.value -o tsv)
+          echo "acr_name=$ACR_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Construir y publicar imagen versionada
+        run: |
+          az acr build \
+            --registry "${{ steps.infrastructure.outputs.acr_name }}" \
+            --image "churn-radar:${GITHUB_SHA}" \
+            --build-arg "MODEL_VERSION=${GITHUB_SHA}" \
+            .
+
+      - name: Desplegar revisión candidata
+        run: |
+          ACR_NAME="${{ steps.infrastructure.outputs.acr_name }}"
+          IMAGE="${ACR_NAME}.azurecr.io/churn-radar:${GITHUB_SHA}"
+          OLD_REVISION=$(az containerapp show \
+            --name "$CONTAINER_APP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query properties.latestReadyRevisionName -o tsv 2>/dev/null || true)
+
+          if [ -z "$OLD_REVISION" ]; then
+            az deployment group create \
+              --name "churn-radar-app-${GITHUB_RUN_ID}" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --template-file infra/main.bicep \
+              --parameters \
+                location="$AZURE_LOCATION" \
+                deployContainerApp=true \
+                containerImage="$IMAGE" \
+                modelVersion="$GITHUB_SHA"
+          else
+            az containerapp update \
+              --name "$CONTAINER_APP_NAME" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --image "$IMAGE" \
+              --revision-suffix "${GITHUB_SHA:0:12}" \
+              --set-env-vars "MODEL_VERSION=$GITHUB_SHA"
+          fi
+
+          NEW_REVISION=$(az containerapp show \
+            --name "$CONTAINER_APP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query properties.latestReadyRevisionName -o tsv)
+
+          if [ -n "$OLD_REVISION" ] && [ "$OLD_REVISION" != "$NEW_REVISION" ]; then
+            az containerapp ingress traffic set \
+              --name "$CONTAINER_APP_NAME" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --revision-weight "$OLD_REVISION=90" "$NEW_REVISION=10"
+          else
+            az containerapp ingress traffic set \
+              --name "$CONTAINER_APP_NAME" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --revision-weight "$NEW_REVISION=100"
+          fi
+
+          echo "Revisión candidata: $NEW_REVISION"
+          echo "Revisión estable anterior: ${OLD_REVISION:-ninguna}"
+
+  set-traffic:
+    if: inputs.operation == 'promote' || inputs.operation == 'rollback'
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Validar revisión objetivo
+        shell: bash
+        run: |
+          if [ -z "${{ inputs.target_revision }}" ]; then
+            echo "target_revision es obligatorio para ${{ inputs.operation }}."
+            exit 1
+          fi
+
+      - name: Iniciar sesión en Azure con OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Preparar Azure Container Apps
+        run: az extension add --name containerapp --upgrade
+
+      - name: Asignar 100% del tráfico
+        run: |
+          az containerapp revision show \
+            --name "$CONTAINER_APP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --revision "${{ inputs.target_revision }}" \
+            --query properties.active -o tsv
+
+          az containerapp ingress traffic set \
+            --name "$CONTAINER_APP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --revision-weight "${{ inputs.target_revision }}=100"
+
+          echo "${{ inputs.operation }} completado sobre ${{ inputs.target_revision }}"

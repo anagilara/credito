@@ -1,0 +1,38 @@
+name: CI - Churn Radar
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validar-modelo:
+    name: validar-modelo
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Calidad de datos (shift-left)
+        run: pytest tests/test_data_quality.py -q
+
+      - name: Pruebas del modelo
+        run: pytest tests/ -q
+
+      - name: Umbral mínimo de AUC
+        run: python src/train.py --check-auc 0.78 --model-version "${{ github.sha }}"
+
+      - name: Validar imagen
+        run: docker build --build-arg MODEL_VERSION="${{ github.sha }}" -t churn-radar:ci .

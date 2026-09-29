@@ -1,0 +1,7 @@
+.git
+.github
+.pytest_cache
+.venv
+artifacts
+tests
+*.py[cod]

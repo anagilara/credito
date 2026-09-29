@@ -1,0 +1,7 @@
+# Reemplace estos propietarios por los equipos reales de la organización,
+# por ejemplo: @organizacion/equipo-riesgo-analytics.
+*        @anagilara
+/src/    @anagilara
+/tests/  @anagilara
+/infra/  @anagilara
+/.github/workflows/ @anagilara
