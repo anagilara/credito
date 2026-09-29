@@ -1,9 +1,7 @@
 """Transformaciones compartidas por entrenamiento y scoring."""
 
 from __future__ import annotations
-
 from collections.abc import Iterable
-
 import pandas as pd
 
 MORA_COLUMNS = [f"mora_{month}m" for month in range(1, 7)]
