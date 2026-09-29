@@ -26,7 +26,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Pruebas del modelo
-        run: pytest tests/ -q
+        run: python -m pytest tests/ -q
 
       - name: Umbral mínimo de AUC
         run: python src/train.py --check-auc 0.78 --model-version "${{ github.sha }}"

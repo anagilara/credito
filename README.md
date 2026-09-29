@@ -88,7 +88,7 @@ Para demostrar una falla de calidad, trabaje en una rama descartable, introduzca
 un valor vacío en una columna requerida y ejecute:
 
 ```powershell
-pytest tests/test_data_quality.py -q
+python -m pytest tests/test_data_quality.py -q
 ```
 
 Restaure el dato antes de integrar el cambio. No use información real para esta
@@ -97,8 +97,8 @@ actividad.
 ## Entrenamiento y pruebas
 
 ```powershell
-pytest tests/test_data_quality.py -q
-pytest tests/ -q
+python -m pytest tests/test_data_quality.py -q
+python -m pytest tests/ -q
 python src/train.py --check-auc 0.78
 ```
 
@@ -186,10 +186,9 @@ durante la construcción.
 `.github/workflows/ci-model.yml` se ejecuta en cada Pull Request:
 
 1. Instala Python 3.11 y las dependencias.
-2. Ejecuta calidad de datos.
-3. Ejecuta toda la suite `pytest`.
-4. exige AUC mínimo de `0.78`.
-5. Construye la imagen.
+2. Ejecuta toda la suite `pytest`, incluida la calidad de datos.
+3. Exige AUC mínimo de `0.78`.
+4. Construye la imagen.
 
 Configure `validar-modelo` como status check requerido para `main`.
 
